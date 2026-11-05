@@ -1,5 +1,5 @@
 ---
-name: security-review
+name: fastify-security-review
 description: Review changed code in this Fastify API for security issues. Checks for missing auth on routes, secrets or tokens in logs, missing input validation, missing 401/403 tests, and relevant OWASP Top 10 risks. Use when asked to security-review a diff, branch, or PR, or before merging route, auth, or logging changes.
 ---
 
