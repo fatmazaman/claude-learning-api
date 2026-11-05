@@ -4,7 +4,7 @@
 	"private": true,
 	"main": "dist/server.js",
 	"scripts": {
-		"dev": "ALLOW_STUB_AUTH=1 tsx watch src/server.ts",
+		"dev": "NODE_ENV=development ALLOW_STUB_AUTH=1 tsx watch src/server.ts",
 		"build": "tsc -p tsconfig.build.json",
 		"start": "node dist/server.js",
 		"test": "NODE_OPTIONS=--experimental-vm-modules jest",

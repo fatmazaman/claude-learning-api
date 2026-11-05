@@ -27,13 +27,14 @@ describe('verifierFromEnv', () => {
 	});
 
 	it('requires an explicit opt-in to use the stub', () => {
-		expect(verifierFromEnv({ ALLOW_STUB_AUTH: '1' })).toBe(stubVerifier);
-		expect(() => verifierFromEnv({ ALLOW_STUB_AUTH: 'true' })).toThrow();
+		expect(verifierFromEnv({ ALLOW_STUB_AUTH: '1', NODE_ENV: 'development' })).toBe(stubVerifier);
+		expect(verifierFromEnv({ ALLOW_STUB_AUTH: '1', NODE_ENV: 'test' })).toBe(stubVerifier);
+		expect(() => verifierFromEnv({ ALLOW_STUB_AUTH: 'true', NODE_ENV: 'development' })).toThrow();
 	});
 
-	it('refuses the stub opt-in in production', () => {
-		expect(() => verifierFromEnv({ ALLOW_STUB_AUTH: '1', NODE_ENV: 'production' })).toThrow(
-			/not permitted/,
-		);
+	it('refuses the stub opt-in outside development and test', () => {
+		for (const NODE_ENV of ['production', 'staging', undefined]) {
+			expect(() => verifierFromEnv({ ALLOW_STUB_AUTH: '1', NODE_ENV })).toThrow(/only permitted/);
+		}
 	});
 });

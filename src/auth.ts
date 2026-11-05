@@ -29,12 +29,13 @@ export const stubVerifier: TokenVerifier = async (token) => {
 /**
  * Picks the token verifier for the running server. There is no default: the stub
  * (which accepts forged tokens) must be opted into with ALLOW_STUB_AUTH=1 and is
- * refused when NODE_ENV=production. Add a real verifier here once one exists.
+ * only allowed when NODE_ENV is development or test. Add a real verifier here once
+ * one exists.
  */
 export function verifierFromEnv(env: NodeJS.ProcessEnv = process.env): TokenVerifier {
 	if (env.ALLOW_STUB_AUTH === '1') {
-		if (env.NODE_ENV === 'production') {
-			throw new Error('ALLOW_STUB_AUTH=1 is not permitted when NODE_ENV=production');
+		if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {
+			throw new Error('ALLOW_STUB_AUTH=1 is only permitted when NODE_ENV is development or test');
 		}
 		return stubVerifier;
 	}
