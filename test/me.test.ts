@@ -22,6 +22,15 @@ describe('GET /me', () => {
 		expect(res.statusCode).toBe(401);
 	});
 
+	it('accepts the Bearer scheme case-insensitively', async () => {
+		const res = await app.inject({
+			method: 'GET',
+			url: '/me',
+			headers: { authorization: `bearer ${fakeJwt({ sub: 'user-1' })}` },
+		});
+		expect(res.statusCode).toBe(200);
+	});
+
 	it('rejects a non-Bearer scheme', async () => {
 		const res = await app.inject({
 			method: 'GET',
@@ -64,7 +73,7 @@ describe('GET /me', () => {
 		expect(res.json()).toEqual({ sub: 'user-1', email: 'a@b.c' });
 	});
 
-	it('fails closed (no 200) when the verifier throws', async () => {
+	it('returns a generic 503 when the verifier throws', async () => {
 		const throwing = buildApp({
 			verifyToken: async () => {
 				throw new Error('jwks unreachable');
@@ -75,7 +84,8 @@ describe('GET /me', () => {
 			url: '/me',
 			headers: { authorization: `Bearer ${fakeJwt({ sub: 'user-1' })}` },
 		});
-		expect(res.statusCode).toBeGreaterThanOrEqual(400);
+		expect(res.statusCode).toBe(503);
+		expect(res.body).not.toContain('jwks');
 		await throwing.close();
 	});
 

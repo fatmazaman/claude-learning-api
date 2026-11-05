@@ -51,8 +51,18 @@ declare module 'fastify' {
 
 export function requireAuth(verify: TokenVerifier) {
 	return async (request: FastifyRequest, reply: FastifyReply) => {
-		const match = /^Bearer (.+)$/.exec(request.headers.authorization ?? '');
-		const user = match ? await verify(match[1]) : null;
+		const match = /^Bearer (.+)$/i.exec(request.headers.authorization ?? '');
+		let user: AuthUser | null = null;
+		if (match) {
+			try {
+				user = await verify(match[1]);
+			} catch (err) {
+				// Verifier failure (e.g. JWKS unreachable) is not the client's fault: log it
+				// server-side and return a generic 503 without leaking the error message.
+				request.log.error({ err }, 'token verification failed');
+				return reply.code(503).send({ error: 'Service Unavailable' });
+			}
+		}
 		if (!user) {
 			return reply.code(401).send({ error: 'Unauthorized' });
 		}
