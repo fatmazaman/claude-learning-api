@@ -16,8 +16,9 @@ Minimal Fastify 5 + TypeScript API (compiled to CommonJS).
 ## Architecture
 
 - `src/app.ts` exports `buildApp(opts)`, which builds the Fastify instance and registers routes without listening. `src/server.ts` is the only entry point that calls `listen`. Tests call `buildApp()` and exercise routes with `app.inject()`, never over a real port.
-- Auth (`src/auth.ts`): `requireAuth(verifier)` is a `preHandler` that parses `Authorization: Bearer <token>`, calls a `TokenVerifier` (`token => Promise<AuthUser | null>`), sets `request.user` (typed via a `declare module 'fastify'` augmentation), or replies 401. The verifier is injected through `buildApp({ verifyToken })`.
-- `stubVerifier` is the default verifier: it **decodes the JWT payload without verifying the signature** (requires a string `sub`) and throws when `NODE_ENV=production`. Real OAuth/OIDC is meant to be added as a new `TokenVerifier` passed to `buildApp`, not by changing routes or `requireAuth`.
+- Auth (`src/auth.ts`): `requireAuth(verifier)` is a `preHandler` that parses `Authorization: Bearer <token>`, calls a `TokenVerifier` (`token => Promise<AuthUser | null>`), sets `request.user` (typed via a `declare module 'fastify'` augmentation), or replies 401. `buildApp({ verifyToken })` **requires** a verifier; there is no default.
+- `src/server.ts` gets its verifier from `verifierFromEnv()`, which throws unless `ALLOW_STUB_AUTH=1` (set by `npm run dev`) and refuses that opt-in when `NODE_ENV=production`. `stubVerifier` **decodes the JWT payload without verifying the signature** (requires a string `sub`) and also throws in production. Real OAuth/OIDC is meant to be added as a new `TokenVerifier` returned from `verifierFromEnv`, not by changing routes or `requireAuth`.
+- `/me` has a response schema that whitelists `sub` and `email`; add new exposed claims there.
 
 ## Environment quirks
 

@@ -17,6 +17,7 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 ## 2. Checks
 
 ### Authentication and authorization
+
 - Every new or changed route in `src/` must use `requireAuth(verifier)` as a `preHandler`, unless it is deliberately public (e.g. a health check). For a public route, say so explicitly in the report.
 - Routes registered inside a plugin or encapsulated scope: confirm the auth hook actually applies there. Fastify hooks do not leak out of their encapsulation context.
 - **Authorization (403)**: routes that take an id or resource must check that `request.user` owns or may access it (IDOR / broken access control). Authentication alone is not enough.
@@ -24,18 +25,21 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 - Flag trust in client-supplied identity (user id in body, query, or headers) instead of `request.user`.
 
 ### Secrets and tokens in logs
+
 - Search changed code for `console.*`, `request.log.*`, `app.log.*`, and `logger` calls that include `authorization`, tokens, cookies, passwords, API keys, or whole `request.headers` / `request.body` objects.
 - Check Fastify logger config: it should redact `req.headers.authorization` and `req.headers.cookie` (via `redact`).
 - Error handlers must not return or log stack traces, token contents, or internal details to clients.
 - Flag hard-coded secrets, keys, or credentials, and new `.env` values committed to git.
 
 ### Input validation
+
 - Every route that reads `body`, `querystring`, `params`, or `headers` needs a JSON Schema (or type-provider schema) for that input. Flag routes that read `request.body` / `request.query` without one.
 - Schemas should set `additionalProperties: false`, bounded `maxLength` / `minimum` / `maximum`, and `required` where appropriate.
 - Add a response schema where sensitive fields could leak, since it filters output.
 - Flag manual parsing (`JSON.parse`, `Number(...)`, casts like `as Foo`) that substitutes for validation.
 
 ### Missing 401/403 tests
+
 - For each new or changed protected route, check `test/` for tests using `app.inject()` that cover:
   - no `Authorization` header → 401
   - malformed header or invalid token → 401
@@ -44,6 +48,7 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 - Report each missing case by route. Suggest the test name and a short `app.inject()` sketch.
 
 ### OWASP Top 10, as relevant to Fastify
+
 - **A01 Broken access control**: missing auth/ownership checks, IDOR, overly permissive CORS (`origin: true` or `*` with credentials).
 - **A02 Cryptographic failures**: weak or unsigned tokens, secrets in code, plaintext sensitive data, missing TLS assumptions.
 - **A03 Injection**: string-built SQL/NoSQL/shell/template inputs, `eval`, `child_process` with user input, unsafe path joins (path traversal), unsanitized reflected HTML.
@@ -80,6 +85,7 @@ Group findings by severity. Within each, order by impact.
 ```
 
 Severity guide:
+
 - **High**: exploitable now. Unauthenticated access to protected data or actions, auth bypass, secrets/tokens logged or committed, injection, IDOR.
 - **Medium**: exploitable under some conditions, or a missing defense-in-depth control. Missing validation on non-critical input, missing rate limiting, missing 401/403 tests on protected routes, permissive CORS.
 - **Low**: hardening and hygiene. Overly loose schemas, verbose errors, minor header or config gaps.

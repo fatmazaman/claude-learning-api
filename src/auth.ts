@@ -26,6 +26,23 @@ export const stubVerifier: TokenVerifier = async (token) => {
 	}
 };
 
+/**
+ * Picks the token verifier for the running server. There is no default: the stub
+ * (which accepts forged tokens) must be opted into with ALLOW_STUB_AUTH=1 and is
+ * refused when NODE_ENV=production. Add a real verifier here once one exists.
+ */
+export function verifierFromEnv(env: NodeJS.ProcessEnv = process.env): TokenVerifier {
+	if (env.ALLOW_STUB_AUTH === '1') {
+		if (env.NODE_ENV === 'production') {
+			throw new Error('ALLOW_STUB_AUTH=1 is not permitted when NODE_ENV=production');
+		}
+		return stubVerifier;
+	}
+	throw new Error(
+		'No token verifier configured. Set ALLOW_STUB_AUTH=1 for local development, or wire up a real TokenVerifier.',
+	);
+}
+
 declare module 'fastify' {
 	interface FastifyRequest {
 		user?: AuthUser;
