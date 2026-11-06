@@ -74,4 +74,10 @@ Add new routes inside the plugin in `buildApp`. Rate limiting only covers routes
 
 A project skill, `.claude/skills/fastify-security-review`, reviews changed code for missing auth, secrets in logs, missing input validation, missing 401/403 tests and relevant OWASP Top 10 issues. In Claude Code, run `/fastify-security-review`.
 
+## Security review eval
+
+To check that the review skill really catches problems, the [`test-review`](https://github.com/fatmazaman/claude-learning-api/tree/test-review) branch plants two security bugs on top of `main`: an unauthenticated route and a bearer token written to the logs. Tests, lint and the typecheck all stay green there, so only the review catches them.
+
+Read the [write-up](https://github.com/fatmazaman/claude-learning-api/blob/test-review/docs/security-review-demo.md) for the bugs, the proof and the fixes. The branch is intentionally vulnerable (its commit is labeled "DO NOT MERGE") and must never be merged into `main`.
+
 See `CLAUDE.md` for further development notes.
