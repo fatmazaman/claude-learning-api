@@ -66,6 +66,7 @@ src/auth.ts     requireAuth, TokenVerifier, stubVerifier, verifierFromEnv
 src/config.ts   HOST and TRUST_PROXY parsing
 src/server.ts   entry point: the only place that calls listen()
 test/           Jest tests; routes are exercised with app.inject(), not a real port
+.claude/        Claude Code project config: skills/, hooks/ and settings.json
 ```
 
 Add new routes inside the plugin in `buildApp`. Rate limiting only covers routes registered after it loads.
@@ -79,5 +80,14 @@ A project skill, `.claude/skills/fastify-security-review`, reviews changed code 
 To check that the review skill really catches problems, the [`test-review`](https://github.com/fatmazaman/claude-learning-api/tree/test-review) branch plants two security bugs on top of `main`: an unauthenticated route and a bearer token written to the logs. Tests, lint and the typecheck all stay green there, so only the review catches them.
 
 Read the [write-up](https://github.com/fatmazaman/claude-learning-api/blob/test-review/docs/security-review-demo.md) for the bugs, the proof and the fixes. The branch is intentionally vulnerable (its commit is labeled "DO NOT MERGE") and must never be merged into `main`.
+
+## Claude Code hooks
+
+Project hooks in `.claude/settings.json` apply to anyone running Claude Code in this repo. Claude Code may ask you to approve them the first time.
+
+- **Format on edit** (PostToolUse): after an Edit or Write to a `.ts` file, runs `prettier --write` on it. It never blocks an edit.
+- **Block secrets** (PreToolUse, `.claude/hooks/block-secrets.sh`): stops Claude from reading or editing `.env` files (`.env.example` and `.env.sample` are allowed) or anything under `secrets/`. The script exits `0` to allow, or `2` to block and send its stderr to Claude as the reason. It fails closed: input it can't parse is blocked too.
+
+The secrets hook is a guardrail for Claude's tool calls, not access control. Its Bash check is best effort: it tests each word of the command, so it misses indirection such as `cat $(echo .e)nv` and symlinks. It also blocks a Bash command that merely mentions `.env` in plain text, for example in a commit message, so put the message in a file and use `git commit -F`.
 
 See `CLAUDE.md` for further development notes.
