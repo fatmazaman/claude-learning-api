@@ -1,3 +1,4 @@
+import Fastify from 'fastify';
 import { hostFromEnv, trustProxyFromEnv } from '../src/config';
 
 describe('hostFromEnv', () => {
@@ -28,5 +29,34 @@ describe('trustProxyFromEnv', () => {
 			true,
 			false,
 		]);
+	});
+});
+
+describe('trustProxyFromEnv with Fastify', () => {
+	// The proxy at 10.0.0.1 appended the real client (203.0.113.9); the client itself
+	// sent a spoofed 6.6.6.6 at the front of X-Forwarded-For.
+	async function clientIp(TRUST_PROXY: string | undefined, forwardedFor: string) {
+		const app = Fastify({ trustProxy: trustProxyFromEnv({ TRUST_PROXY }) });
+		app.get('/ip', async (request) => request.ip);
+		const res = await app.inject({
+			method: 'GET',
+			url: '/ip',
+			remoteAddress: '10.0.0.1',
+			headers: { 'x-forwarded-for': forwardedFor },
+		});
+		await app.close();
+		return res.body;
+	}
+
+	it('ignores X-Forwarded-For when TRUST_PROXY is unset', async () => {
+		expect(await clientIp(undefined, '6.6.6.6, 203.0.113.9')).toBe('10.0.0.1');
+	});
+
+	it('ignores a spoofed entry behind one trusted proxy', async () => {
+		expect(await clientIp('1', '6.6.6.6, 203.0.113.9')).toBe('203.0.113.9');
+	});
+
+	it('walks two trusted proxies to the real client', async () => {
+		expect(await clientIp('2', '203.0.113.9, 10.0.0.7')).toBe('203.0.113.9');
 	});
 });
