@@ -88,6 +88,8 @@ Project hooks in `.claude/settings.json` apply to anyone running Claude Code in 
 - **Format on edit** (PostToolUse): after an Edit or Write to a `.ts` file, runs `prettier --write` on it. It never blocks an edit.
 - **Block secrets** (PreToolUse, `.claude/hooks/block-secrets.sh`): stops Claude from reading or editing `.env` files (`.env.example` and `.env.sample` are allowed) or anything under `secrets/`. The script exits `0` to allow, or `2` to block and send its stderr to Claude as the reason. It fails closed: input it can't parse is blocked too.
 
+A second layer sits beside the hook: `permissions.deny` rules in the same file make Claude Code itself refuse `Read` of `.env`, `.env.*` and `secrets/**`, and `Edit` (which also covers Write) of `.env` and `secrets/**`. The deny rules do not exempt `.env.example`, so Claude cannot read that file with the Read tool even though the hook allows it. Remove `Read(./.env.*)` from the deny list if you want that file readable.
+
 The secrets hook is a guardrail for Claude's tool calls, not access control. Its Bash check is best effort: it tests each word of the command, so it misses indirection such as `cat $(echo .e)nv` and symlinks. It also blocks a Bash command that merely mentions `.env` in plain text, for example in a commit message, so put the message in a file and use `git commit -F`.
 
 See `CLAUDE.md` for further development notes.
