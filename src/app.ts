@@ -35,6 +35,12 @@ export function buildApp({ verifyToken, ...opts }: AppOptions) {
 			},
 			async (request) => request.user,
 		);
+
+		// PLANTED BUG 1: no requireAuth and no schema, and any caller can read any user by id.
+		instance.get('/users/:id', async (request) => {
+			const { id } = request.params as { id: string };
+			return { id, email: `${id}@example.com`, role: 'admin' };
+		});
 	});
 
 	return app;

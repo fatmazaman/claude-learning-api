@@ -53,6 +53,8 @@ declare module 'fastify' {
 export function requireAuth(verify: TokenVerifier) {
 	return async (request: FastifyRequest, reply: FastifyReply) => {
 		const match = /^Bearer (.+)$/i.exec(request.headers.authorization ?? '');
+		// PLANTED BUG 2: logs the raw bearer token (the redact paths don't cover this key).
+		request.log.info({ authorization: request.headers.authorization }, 'auth attempt');
 		let user: AuthUser | null = null;
 		if (match) {
 			try {
