@@ -71,6 +71,28 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/me
 
 The verifier tests are fully offline: they sign tokens with a key pair generated in the test, and a throwaway server on `127.0.0.1` stands in for the provider.
 
+## Verified against Auth0
+
+`scripts/auth0-e2e.sh` checks the verifier against a real Auth0 tenant. It requests a client-credentials token, starts the compiled server against the tenant, and calls `/me` with the real token and with tampered copies. Put `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID` and `AUTH0_CLIENT_SECRET` in an untracked `.env.auth0` file and run the script yourself. It never prints the secret or the token. Output from a passing run (tenant and client ID replaced with placeholders):
+
+```
+1. Requesting a client-credentials token from YOUR-TENANT.us.auth0.com
+2. Token received (not printed). Its decoded header and claims:
+   header: {"alg":"RS256","typ":"JWT","kid":"..."}
+   claims: {"iss":"https://YOUR-TENANT.us.auth0.com/","aud":"https://api.claude-learning.example","sub":"CLIENT_ID@clients","expires":"..."}
+3. Building and starting the real server against https://YOUR-TENANT.us.auth0.com/
+   server is up (discovery against your tenant succeeded)
+4. Calling GET /me
+   PASS  no token                             -> 401 {"error":"Unauthorized"}
+   PASS  real Auth0 token                     -> 200 {"sub":"CLIENT_ID@clients"}
+   PASS  same token, payload changed to admin -> 401 {"error":"Unauthorized"}
+   PASS  same token, signature altered        -> 401 {"error":"Unauthorized"}
+5. Did the server log the token or its signature?
+   PASS  not in the server log
+```
+
+Two things this run shows. Auth0's `iss` ends in a slash and matches `OIDC_ISSUER` exactly. Auth0 access tokens carry `typ: JWT` rather than `at+jwt`, which is why the `typ` header is not enforced. Machine-to-machine tokens have no `scope` claim until you grant the app permissions.
+
 ## Project layout
 
 ```
