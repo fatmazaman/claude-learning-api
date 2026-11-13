@@ -9,6 +9,8 @@ npm install
 npm run dev   # http://127.0.0.1:3000, restarts on change
 ```
 
+Requires Node.js 22.12 or newer (the OIDC library, `jose`, is ESM-only and is loaded with `require`).
+
 `npm run dev` sets `NODE_ENV=development` and `ALLOW_STUB_AUTH=1` so you can call protected routes locally (see [Authentication](#authentication)).
 
 ## Scripts
@@ -47,22 +49,34 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/me
 | `PORT`            | `3000`      | Port to listen on                                                                               |
 | `HOST`            | `127.0.0.1` | Interface to bind. Set `0.0.0.0` in container or deploy config                                  |
 | `TRUST_PROXY`     | off         | Number of trusted reverse-proxy hops (e.g. `1` behind one load balancer). Invalid means off     |
+| `OIDC_ISSUER`     | unset       | OIDC issuer URL, exactly as in the token's `iss` claim (Auth0: with a trailing slash)           |
+| `OIDC_AUDIENCE`   | unset       | Audience (`aud`) tokens must be issued for. Must be set together with `OIDC_ISSUER`             |
 | `ALLOW_STUB_AUTH` | unset       | `1` enables the insecure stub verifier. Only honored when `NODE_ENV` is `development` or `test` |
 | `NODE_ENV`        | unset       | See above                                                                                       |
 
 ## Authentication
 
-`requireAuth(verifier)` in `src/auth.ts` is a `preHandler` that reads `Authorization: Bearer <token>`, passes the token to a `TokenVerifier`, and sets `request.user`. It replies `401` for a missing or invalid token and a generic `503` if the verifier itself throws.
+`requireAuth(verifier)` in `src/auth.ts` is a `preHandler` that reads `Authorization: Bearer <token>`, passes the token to a `TokenVerifier`, and sets `request.user`. It replies `401` for a missing or invalid token, and a generic `503` if the verifier could not check the token at all (for example the provider's keys are unreachable).
 
-There is **no real verifier yet**. The only one is `stubVerifier`, which decodes the JWT payload **without checking the signature**, so anyone can forge a token. The server refuses to start unless the stub is explicitly allowed (see `ALLOW_STUB_AUTH` above), which means it will not start in production as is.
+**OIDC verifier.** Set `OIDC_ISSUER` and `OIDC_AUDIENCE` and the server verifies tokens with `src/verifiers/oidc.ts`, built on [`jose`](https://github.com/panva/jose):
 
-To add real OAuth/OIDC, write a `TokenVerifier` (for example with `jose` and the issuer's JWKS) that checks signature, `exp`, `iss` and `aud`, and return it from `verifierFromEnv()` in `src/auth.ts`. Routes and `requireAuth` should not need to change.
+- **Startup:** it fetches `<issuer>/.well-known/openid-configuration`, requires the document's `issuer` to equal `OIDC_ISSUER` exactly, and reads `jwks_uri`. If any of that fails, the server refuses to start. Setting only one of the two variables is also an error.
+- **Per request:** it checks the signature (**RS256 only**, which rules out `alg: none` and HS256 key-confusion), `iss` (exact match), `aud`, `exp` (required) and `nbf`, allowing 30 seconds of clock skew. Any failure is a `401`. The token is never logged.
+- **Key rotation:** the key set is cached for 10 minutes. A token with an unknown `kid` triggers a refetch, at most once every 30 seconds, so a just-rotated key may get `401`s for a short while.
+- **Issuer format:** `OIDC_ISSUER` must equal the token's `iss` claim character for character. Auth0 issuers end in a slash (`https://TENANT.auth0.com/`).
+- **Mapping:** only `sub` and `scope` (as a list) reach `request.user`, so `/me` returns just `sub`.
+- **Not enforced:** the `typ` header (RFC 9068 `at+jwt`).
+
+**Dev stub.** If neither OIDC variable is set, the server starts only with `ALLOW_STUB_AUTH=1` and `NODE_ENV` of `development` or `test`. `stubVerifier` decodes the JWT payload **without checking the signature**, so anyone can forge a token. Never use it outside local development.
+
+The verifier tests are fully offline: they sign tokens with a key pair generated in the test, and a throwaway server on `127.0.0.1` stands in for the provider.
 
 ## Project layout
 
 ```
 src/app.ts      buildApp(): builds the Fastify instance and routes, never listens
 src/auth.ts     requireAuth, TokenVerifier, stubVerifier, verifierFromEnv
+src/verifiers/  oidc.ts: the real OIDC token verifier (jose)
 src/config.ts   HOST and TRUST_PROXY parsing
 src/server.ts   entry point: the only place that calls listen()
 test/           Jest tests; routes are exercised with app.inject(), not a real port

@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { createOidcVerifier, oidcConfigFromEnv } from './verifiers/oidc';
 
 export interface AuthUser {
 	sub: string;
@@ -9,8 +10,8 @@ export interface AuthUser {
 export type TokenVerifier = (token: string) => Promise<AuthUser | null>;
 
 /**
- * STUB: decodes the JWT payload WITHOUT verifying the signature.
- * Replace with real OIDC verification (e.g. `jose` + the issuer's JWKS).
+ * STUB: decodes the JWT payload WITHOUT verifying the signature. For development and
+ * tests only; the real verifier is in ./verifiers/oidc.
  */
 export const stubVerifier: TokenVerifier = async (token) => {
 	if (process.env.NODE_ENV === 'production') {
@@ -27,12 +28,19 @@ export const stubVerifier: TokenVerifier = async (token) => {
 };
 
 /**
- * Picks the token verifier for the running server. There is no default: the stub
- * (which accepts forged tokens) must be opted into with ALLOW_STUB_AUTH=1 and is
- * only allowed when NODE_ENV is development or test. Add a real verifier here once
- * one exists.
+ * Picks the token verifier for the running server. There is no default.
+ * 1. OIDC_ISSUER and OIDC_AUDIENCE set: the real OIDC verifier (any NODE_ENV). It fetches
+ *    the provider's discovery document, so this rejects when that fails.
+ * 2. Exactly one of the two set: throws, since that is a misconfiguration.
+ * 3. Neither set: the stub (which accepts forged tokens), only with ALLOW_STUB_AUTH=1 and
+ *    NODE_ENV of development or test.
+ * 4. Otherwise throws, so the server refuses to start.
  */
-export function verifierFromEnv(env: NodeJS.ProcessEnv = process.env): TokenVerifier {
+export async function verifierFromEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<TokenVerifier> {
+	const oidc = oidcConfigFromEnv(env);
+	if (oidc) return createOidcVerifier(oidc);
 	if (env.ALLOW_STUB_AUTH === '1') {
 		if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {
 			throw new Error('ALLOW_STUB_AUTH=1 is only permitted when NODE_ENV is development or test');
@@ -40,7 +48,7 @@ export function verifierFromEnv(env: NodeJS.ProcessEnv = process.env): TokenVeri
 		return stubVerifier;
 	}
 	throw new Error(
-		'No token verifier configured. Set ALLOW_STUB_AUTH=1 for local development, or wire up a real TokenVerifier.',
+		'No token verifier configured. Set OIDC_ISSUER and OIDC_AUDIENCE, or ALLOW_STUB_AUTH=1 (with NODE_ENV=development or test) for local development.',
 	);
 }
 
