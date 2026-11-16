@@ -1,8 +1,11 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { parseScope } from './scopes';
 import { createOidcVerifier, oidcConfigFromEnv } from './verifiers/oidc';
 
 export interface AuthUser {
 	sub: string;
+	/** Granted scopes, normalized to a list by the verifier. Absent means none. */
+	scope?: string[];
 	[claim: string]: unknown;
 }
 
@@ -21,7 +24,13 @@ export const stubVerifier: TokenVerifier = async (token) => {
 	if (parts.length !== 3) return null;
 	try {
 		const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-		return typeof payload?.sub === 'string' ? (payload as AuthUser) : null;
+		if (typeof payload?.sub !== 'string') return null;
+		const user = payload as AuthUser;
+		// Normalize like the real verifier does, so dev and test tokens behave the same way.
+		const scope = parseScope(payload.scope);
+		if (scope) user.scope = scope;
+		else delete user.scope;
+		return user;
 	} catch {
 		return null;
 	}
@@ -73,7 +82,9 @@ export function requireAuth(verify: TokenVerifier) {
 			}
 		}
 		if (!user) {
-			return reply.code(401).send({ error: 'Unauthorized' });
+			// RFC 6750: say how to authenticate, and whether a token was sent and rejected.
+			const challenge = match ? 'Bearer error="invalid_token"' : 'Bearer';
+			return reply.code(401).header('WWW-Authenticate', challenge).send({ error: 'Unauthorized' });
 		}
 		request.user = user;
 	};

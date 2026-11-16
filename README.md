@@ -29,12 +29,16 @@ Run Jest through `npm test`, not bare `npx jest`: it needs `--experimental-vm-mo
 
 ## Endpoints
 
-| Method | Path      | Auth   | Response                                                   |
-| ------ | --------- | ------ | ---------------------------------------------------------- |
-| GET    | `/health` | none   | `{ "status": "ok" }`                                       |
-| GET    | `/me`     | Bearer | `{ "sub": "...", "email": "..." }` (only these two claims) |
+| Method | Path      | Auth                         | Response                                                                                           |
+| ------ | --------- | ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| GET    | `/health` | none                         | `{ "status": "ok" }`                                                                               |
+| GET    | `/me`     | Bearer                       | `{ "sub": "...", "email": "..." }` (only these two claims)                                         |
+| GET    | `/notes`  | Bearer + scope `notes:read`  | The caller's own notes                                                                             |
+| POST   | `/notes`  | Bearer + scope `notes:write` | Creates a note from `{ "text": "..." }` (1 to 500 characters), `201`; at most 100 per user (`409`) |
 
-Requests are rate limited to 100 per minute per client, and responses carry security headers from `@fastify/helmet`.
+Notes are a demo resource: in memory, per user (keyed by the token's `sub`), gone on restart. A token without the needed scope gets `403`, not `200`; see [Authorization](#authorization-scopes).
+
+Requests are rate limited to 100 per minute per client, and responses carry security headers from `@fastify/helmet`. Unexpected server errors return a generic `500`; the detail is logged, never sent to the client.
 
 ```bash
 # a throwaway unsigned token, only accepted by the dev stub verifier
@@ -56,7 +60,7 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/me
 
 ## Authentication
 
-`requireAuth(verifier)` in `src/auth.ts` is a `preHandler` that reads `Authorization: Bearer <token>`, passes the token to a `TokenVerifier`, and sets `request.user`. It replies `401` for a missing or invalid token, and a generic `503` if the verifier could not check the token at all (for example the provider's keys are unreachable).
+`requireAuth(verifier)` in `src/auth.ts` is an `onRequest` hook that reads `Authorization: Bearer <token>`, passes the token to a `TokenVerifier`, and sets `request.user`. It replies `401` for a missing or invalid token, and a generic `503` if the verifier could not check the token at all (for example the provider's keys are unreachable). Every `401` carries a `WWW-Authenticate` header: `Bearer` when no token was sent, `Bearer error="invalid_token"` when one was sent and rejected.
 
 **OIDC verifier.** Set `OIDC_ISSUER` and `OIDC_AUDIENCE` and the server verifies tokens with `src/verifiers/oidc.ts`, built on [`jose`](https://github.com/panva/jose):
 
@@ -70,6 +74,21 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:3000/me
 **Dev stub.** If neither OIDC variable is set, the server starts only with `ALLOW_STUB_AUTH=1` and `NODE_ENV` of `development` or `test`. `stubVerifier` decodes the JWT payload **without checking the signature**, so anyone can forge a token. Never use it outside local development.
 
 The verifier tests are fully offline: they sign tokens with a key pair generated in the test, and a throwaway server on `127.0.0.1` stands in for the provider.
+
+## Authorization (scopes)
+
+Authentication says who the caller is; scopes say what they may do. `requireScope(...scopes)` in `src/scopes.ts` runs after `requireAuth` and answers `403`, not `200`, when the token lacks a needed scope:
+
+```ts
+instance.get('/notes', { onRequest: [requireAuth(verify), requireScope('notes:read')] }, handler);
+```
+
+- **401 vs 403:** `401` means "I don't know who you are" (missing or invalid token). `403` means "I know who you are, and you may not do this". A `403` carries `WWW-Authenticate: Bearer error="insufficient_scope", scope="notes:write"`, naming what is needed (RFC 6750).
+- **Matching:** the token must hold **all** the listed scopes. Whole tokens match exactly and case-sensitively, so `notes:readonly` does not satisfy `notes:read`. No wildcards, no hierarchy. A malformed `scope` claim grants nothing.
+- **Source:** the token's `scope` claim, as a space-delimited string or an array. Other providers' claims (Auth0 RBAC's `permissions` array, Okta's `scp`, Azure's `roles`) are not mapped.
+- **Why `onRequest`:** Fastify validates the body _before_ `preHandler`. With auth there, a caller who is not allowed in would get a `400` describing the schema instead of a `401`/`403`. In `onRequest` the check runs before the body is even parsed. Tests cover both orderings.
+- **Strict validation:** the app turns off Fastify's default type coercion and silent removal of extra properties, so `{"text": 5}` and `{"text": "ok", "extra": 1}` are a `400`, not quietly rewritten.
+- **Misuse fails closed:** a route that uses `requireScope` without `requireAuth` before it answers a generic `500`, never a `200`.
 
 ## Verified against Auth0
 
@@ -92,6 +111,8 @@ The verifier tests are fully offline: they sign tokens with a key pair generated
 ```
 
 Two things this run shows. Auth0's `iss` ends in a slash and matches `OIDC_ISSUER` exactly. Auth0 access tokens carry `typ: JWT` rather than `at+jwt`, which is why the `typ` header is not enforced. Machine-to-machine tokens have no `scope` claim until you grant the app permissions.
+
+The script also checks scopes against the `/notes` routes, with the expected status following the scopes in the token. With the Auth0 app granted only `notes:read`, `GET /notes` is `200` and `POST /notes` is `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="notes:write"`. After also granting `notes:write`, the same token flow gives `201` on `POST /notes`. The token and the user are identical in both runs; only the granted permission changes the result.
 
 ## Project layout
 

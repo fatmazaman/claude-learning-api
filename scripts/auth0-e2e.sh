@@ -113,6 +113,42 @@ check "real Auth0 token" 200 -H @<(bearer "$TOKEN")
 check "same token, payload changed to admin" 401 -H @<(bearer "$TAMPERED_PAYLOAD")
 check "same token, signature altered" 401 -H @<(bearer "$TAMPERED_SIGNATURE")
 
+echo "4b. Scopes: GET and POST /notes (expected status follows the scopes in YOUR token)"
+TOKEN_SCOPE=$(node -e '
+const p = JSON.parse(Buffer.from(process.env.TOKEN.split(".")[1], "base64url"));
+console.log(Array.isArray(p.scope) ? p.scope.join(" ") : typeof p.scope === "string" ? p.scope : "");
+')
+echo "   scopes in this token: ${TOKEN_SCOPE:-(none)}"
+has_scope() { case " $TOKEN_SCOPE " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+expect_read=403
+has_scope notes:read && expect_read=200
+expect_write=403
+has_scope notes:write && expect_write=201
+
+check_route() { # method, path, label, expected status, [curl args...]
+	local method=$1 path=$2 label=$3 expected=$4 out code text headers mark=PASS
+	shift 4
+	headers=$(mktemp)
+	out=$(curl -sS -X "$method" -D "$headers" -w '\n%{http_code}' "$@" "$BASE$path")
+	code=${out##*$'\n'}
+	text=${out%$'\n'*}
+	[ "$code" = "$expected" ] || { mark=FAIL; failed=1; }
+	printf '   %s  %-36s -> %s %s\n' "$mark" "$label" "$code" "$text"
+	if [ "$code" = 401 ] || [ "$code" = 403 ]; then
+		grep -i '^www-authenticate:' "$headers" | tr -d '\r' | sed 's/^/          /' || true
+	fi
+	rm -f "$headers"
+}
+
+check_route GET /notes "GET /notes, no token" 401
+check_route GET /notes "GET /notes (needs notes:read)" "$expect_read" -H @<(bearer "$TOKEN")
+check_route POST /notes "POST /notes (needs notes:write)" "$expect_write" \
+	-H @<(bearer "$TOKEN") -H 'content-type: application/json' --data '{"text":"auth0 e2e note"}'
+if [ "$expect_read" = 403 ] || [ "$expect_write" = 403 ]; then
+	echo "   (A 403 above is the lesson: a valid, verified token that lacks the scope is not allowed in.)"
+fi
+echo
+
 echo "5. Did the server log the token or its signature?"
 if grep -qF -e "$TOKEN" -e "${TOKEN##*.}" "$LOG"; then
 	echo "   FAIL  found in the server log"

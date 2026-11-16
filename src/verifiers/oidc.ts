@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import type { AuthUser, TokenVerifier } from '../auth';
+import { parseScope } from '../scopes';
 
 export interface OidcConfig {
 	/** Must equal the `iss` claim exactly, trailing slash included (Auth0 issuers end in "/"). */
@@ -123,12 +124,6 @@ function isTokenRejection(err: unknown): boolean {
 		err instanceof errors.JWTInvalid ||
 		err instanceof errors.JOSENotSupported
 	);
-}
-
-function parseScope(value: unknown): string[] | undefined {
-	if (typeof value === 'string') return value.split(/\s+/).filter(Boolean);
-	if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value;
-	return undefined;
 }
 
 function toAuthUser(payload: JWTPayload): AuthUser | null {

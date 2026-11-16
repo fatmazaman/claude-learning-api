@@ -18,7 +18,9 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 
 ### Authentication and authorization
 
-- Every new or changed route in `src/` must use `requireAuth(verifier)` as a `preHandler`, unless it is deliberately public (e.g. a health check). For a public route, say so explicitly in the report.
+- Every new or changed route in `src/` must use `requireAuth(verifier)`, unless it is deliberately public (e.g. a health check). For a public route, say so explicitly in the report.
+- **Hook stage:** `requireAuth` and `requireScope` must run in `onRequest` (or `preValidation`), not `preHandler`. Fastify validates the body before `preHandler`, so auth there answers 400 (and reveals the schema) to callers who are not allowed in, and parses their body first. Flag any route with a body schema whose auth is in `preHandler`.
+- **Scopes:** a route that needs a permission must use `requireScope(...)` after `requireAuth`. Flag routes that authenticate but never check a scope when a resource is read or written. `requireScope` needs ALL listed scopes and matches whole tokens exactly; flag any new scope check that matches by substring, prefix or case-insensitively, or that treats a missing `scope` claim as allowed.
 - Routes registered inside a plugin or encapsulated scope: confirm the auth hook actually applies there. Fastify hooks do not leak out of their encapsulation context.
 - **Authorization (403)**: routes that take an id or resource must check that `request.user` owns or may access it (IDOR / broken access control). Authentication alone is not enough.
 - `stubVerifier` decodes the JWT **without verifying the signature**. Flag any new code that uses it outside tests/dev, or that relaxes its `NODE_ENV=production` guard. Real auth belongs in a new `TokenVerifier` passed to `buildApp`, not in route or `requireAuth` changes.
@@ -35,6 +37,7 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 
 - Every route that reads `body`, `querystring`, `params`, or `headers` needs a JSON Schema (or type-provider schema) for that input. Flag routes that read `request.body` / `request.query` without one.
 - Schemas should set `additionalProperties: false`, bounded `maxLength` / `minimum` / `maximum`, and `required` where appropriate.
+- Check the Ajv options in `buildApp`. Fastify's defaults (`coerceTypes`, `removeAdditional`) turn `5` into `"5"` and silently delete extra properties, so `additionalProperties: false` strips instead of rejecting. This app sets both to `false`; flag any change that re-enables them, and any route with a per-route validator that does.
 - Add a response schema where sensitive fields could leak, since it filters output.
 - Flag manual parsing (`JSON.parse`, `Number(...)`, casts like `as Foo`) that substitutes for validation.
 
@@ -43,7 +46,8 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
 - For each new or changed protected route, check `test/` for tests using `app.inject()` that cover:
   - no `Authorization` header → 401
   - malformed header or invalid token → 401
-  - valid token but not allowed (when authorization rules exist) → 403
+  - valid token but not allowed (when authorization rules exist) → 403, including a token with no scope claim and one with only a near-miss scope
+  - for routes with a body: an invalid body from a caller who is not allowed in → 401/403, not 400
   - validation failure → 400
 - Report each missing case by route. Suggest the test name and a short `app.inject()` sketch.
 

@@ -14,6 +14,25 @@ describe('stubVerifier', () => {
 		await expect(stubVerifier(fakeJwt({ sub: 'user-1' }))).rejects.toThrow(/production/);
 	});
 
+	it('normalizes the scope claim to a list, like the real verifier', async () => {
+		process.env.NODE_ENV = 'test';
+		await expect(stubVerifier(fakeJwt({ sub: 'u', scope: 'a b' }))).resolves.toEqual({
+			sub: 'u',
+			scope: ['a', 'b'],
+		});
+		await expect(stubVerifier(fakeJwt({ sub: 'u', scope: ['a'] }))).resolves.toEqual({
+			sub: 'u',
+			scope: ['a'],
+		});
+	});
+
+	it('drops a malformed scope claim instead of passing it through', async () => {
+		process.env.NODE_ENV = 'test';
+		for (const scope of [42, true, { a: 1 }, ['a', 3]]) {
+			await expect(stubVerifier(fakeJwt({ sub: 'u', scope }))).resolves.toEqual({ sub: 'u' });
+		}
+	});
+
 	it('decodes unsigned tokens outside production', async () => {
 		process.env.NODE_ENV = 'test';
 		await expect(stubVerifier(fakeJwt({ sub: 'user-1' }))).resolves.toEqual({ sub: 'user-1' });

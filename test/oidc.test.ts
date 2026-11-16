@@ -461,3 +461,40 @@ describe('GET /me with the OIDC verifier', () => {
 		await provider.close();
 	});
 });
+
+describe('notes scopes with the OIDC verifier', () => {
+	let key: Key;
+	beforeAll(async () => {
+		key = await makeKey('key-1');
+	});
+
+	const call = async (method: 'GET' | 'POST', scope: string | undefined) => {
+		const app = buildApp({ verifyToken: verifierFor([key]) });
+		const token = await signToken(key, scope === undefined ? {} : { extra: { scope } });
+		const res = await app.inject({
+			method,
+			url: '/notes',
+			headers: { authorization: `Bearer ${token}` },
+			...(method === 'POST' ? { payload: { text: 'hello' } } : {}),
+		});
+		await app.close();
+		return res;
+	};
+
+	it('a signed token with only notes:read can read but not write (403, not 200)', async () => {
+		expect((await call('GET', 'notes:read')).statusCode).toBe(200);
+		const denied = await call('POST', 'notes:read');
+		expect(denied.statusCode).toBe(403);
+		expect(denied.headers['www-authenticate']).toBe(
+			'Bearer error="insufficient_scope", scope="notes:write"',
+		);
+	});
+
+	it('a signed token with both scopes can write', async () => {
+		expect((await call('POST', 'notes:read notes:write')).statusCode).toBe(201);
+	});
+
+	it('a signed token with no scope claim gets 403, not 200', async () => {
+		expect((await call('GET', undefined)).statusCode).toBe(403);
+	});
+});
