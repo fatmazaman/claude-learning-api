@@ -51,12 +51,25 @@ Review only the **changed code**, not the whole repo. Report findings as High/Me
   - validation failure → 400
 - Report each missing case by route. Suggest the test name and a short `app.inject()` sketch.
 
+### MCP server (when `src/mcp/` or the `/mcp` route changes)
+
+The MCP server is an OAuth 2.0 resource server (MCP authorization spec). Check each of these against the code, and cite `file:line`:
+
+- **Audience binding:** tokens must be accepted only if issued for this server (`aud` equals the MCP URL, `OIDC_AUDIENCE`). Flag any verifier change that loosens `aud`, `iss` or `exp`, and any path that accepts a token the verifier did not validate.
+- **No token passthrough (spec MUST NOT):** search `src/mcp/` for `fetch`, `http.request`, `https.request`, `axios`, `got`, and for any use of `request.headers.authorization`. The `authInfo` handed to the SDK must keep `token: ''`, **and the `Authorization` header must be deleted from the request before the hand-off** (the SDK passes tools the original `Request`, so a blank `authInfo.token` alone does not stop a tool from reading the header). Also check `createMcpHandler` keeps `maxSubscriptions: 0` unless a tool really needs `subscriptions/listen` (otherwise any authenticated caller can hold long-lived streams open). Flag any tool or helper that makes an outbound call, or that can reach the caller's token.
+- **Tool scoping:** every tool must declare a `scopeChallenge` (`requireScopes(...)`) matching what it reads or writes, and must read the caller from `authInfo.extra.sub`, never from arguments. Flag a tool without a scope check, a tool that takes a user id as input, or a shared (not per-`sub`) data path.
+- **Challenges:** a 401 must carry `WWW-Authenticate: Bearer resource_metadata=…` (and `scope`, least privilege); an under-scoped tool call must be HTTP 403 `insufficient_scope` naming the needed scope. Flag a scope challenge that includes more than the operation needs.
+- **Transport guards:** Host and Origin must be validated before authentication (DNS rebinding, spec MUST) and the response must not echo the offending value. `GET`/`DELETE` on `/mcp` must stay `405` (no sessions). A token in the query string must be ignored.
+- **Metadata:** the protected resource metadata is public, so it must contain no secrets, and `resource` must equal the configured audience exactly.
+- **Configuration:** `MCP_ENABLED` must refuse to start without the real OIDC verifier (never with the stub), and must reject an audience that is not the canonical `https` (or localhost `http`) URL with path `/mcp`.
+- **Dependencies:** run `npm audit --omit=dev` and note new transitive packages (the SDK adapter pulls in `hono`).
+
 ### OWASP Top 10, as relevant to Fastify
 
 - **A01 Broken access control**: missing auth/ownership checks, IDOR, overly permissive CORS (`origin: true` or `*` with credentials).
 - **A02 Cryptographic failures**: weak or unsigned tokens, secrets in code, plaintext sensitive data, missing TLS assumptions.
 - **A03 Injection**: string-built SQL/NoSQL/shell/template inputs, `eval`, `child_process` with user input, unsafe path joins (path traversal), unsanitized reflected HTML.
-- **A04 Insecure design**: no rate limiting on login or other sensitive routes (`@fastify/rate-limit`), unbounded pagination or payload sizes.
+- **A04 Insecure design**: no rate limiting on login or other sensitive routes (`@fastify/rate-limit`), unbounded pagination or payload sizes. **Rate limiting must run before the route's auth hooks:** in its default mode the plugin appends its hook after them, so requests that fail auth are never counted. This app registers it with `global: false` and adds `instance.rateLimit()` as the plugin's first `onRequest` hook; flag any change that reverts that, and any route registered outside that plugin.
 - **A05 Security misconfiguration**: missing `@fastify/helmet`, verbose errors, a body limit that is too large, `trustProxy` set wrongly, debug flags on.
 - **A06 Vulnerable components**: new or upgraded dependencies. Run `npm audit --omit=dev` and flag production findings. (Known dev-only Jest findings are expected.)
 - **A07 Authentication failures**: missing token expiry, `exp`/`aud`/`iss` unchecked, signature verification skipped.

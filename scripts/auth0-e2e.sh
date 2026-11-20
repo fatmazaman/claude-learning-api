@@ -78,8 +78,13 @@ console.log([h, p, s.slice(0, -2) + (s.endsWith("AA") ? "BB" : "AA")].join("."))
 echo "3. Building and starting the real server against ${ISSUER}"
 npm run build --silent
 LOG=$(mktemp)
+# The MCP server needs OIDC_AUDIENCE to be the MCP URL, so turn it on only when yours is.
+case "$AUTH0_AUDIENCE" in
+*/mcp) MCP_ON=1 ;;
+*) MCP_ON=0 ;;
+esac
 NODE_ENV=production PORT="$PORT" OIDC_ISSUER="$ISSUER" OIDC_AUDIENCE="$AUTH0_AUDIENCE" \
-	node dist/server.js >"$LOG" 2>&1 &
+	MCP_ENABLED="$MCP_ON" node dist/server.js >"$LOG" 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true; rm -f "$LOG"' EXIT
 
@@ -146,6 +151,67 @@ check_route POST /notes "POST /notes (needs notes:write)" "$expect_write" \
 	-H @<(bearer "$TOKEN") -H 'content-type: application/json' --data '{"text":"auth0 e2e note"}'
 if [ "$expect_read" = 403 ] || [ "$expect_write" = 403 ]; then
 	echo "   (A 403 above is the lesson: a valid, verified token that lacks the scope is not allowed in.)"
+fi
+echo
+
+echo "4c. MCP server at /mcp"
+if [ "$MCP_ON" != 1 ]; then
+	echo "   skipped: AUTH0_AUDIENCE is not an MCP URL (it must end in /mcp, e.g. http://localhost:3000/mcp)."
+else
+	# Discovery: does the published metadata point at YOUR tenant and name THIS resource?
+	metadata=$(curl -sS "$BASE/.well-known/oauth-protected-resource/mcp")
+	echo "   metadata: $(printf '%s' "$metadata" | jq -c .)"
+	if [ "$(printf '%s' "$metadata" | jq -r '.authorization_servers[0]')" = "$ISSUER" ] &&
+		[ "$(printf '%s' "$metadata" | jq -r '.resource')" = "$AUTH0_AUDIENCE" ]; then
+		echo "   PASS  authorization_servers[0] is your issuer and resource is your audience"
+	else
+		echo "   FAIL  metadata does not name your issuer and audience"
+		failed=1
+	fi
+
+	MCP_META='{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"auth0-e2e","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}'
+	mcp_call() { # label, method, params JSON, expected status, [curl args...]
+		local label=$1 method=$2 params=$3 expected=$4 name body out code text headers mark=PASS summary
+		shift 4
+		name=$(printf '%s' "$params" | jq -r '.name // empty')
+		body=$(jq -nc --arg method "$method" --argjson params "$params" --argjson meta "$MCP_META" \
+			'{jsonrpc: "2.0", id: 1, method: $method, params: ($params + {_meta: $meta})}')
+		headers=$(mktemp)
+		if [ -n "$name" ]; then
+			out=$(curl -sS -X POST -D "$headers" -w '\n%{http_code}' \
+				-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+				-H 'mcp-protocol-version: 2026-07-28' -H "mcp-method: $method" -H "mcp-name: $name" \
+				--data "$body" "$@" "$BASE/mcp")
+		else
+			out=$(curl -sS -X POST -D "$headers" -w '\n%{http_code}' \
+				-H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+				-H 'mcp-protocol-version: 2026-07-28' -H "mcp-method: $method" \
+				--data "$body" "$@" "$BASE/mcp")
+		fi
+		code=${out##*$'\n'}
+		text=${out%$'\n'*}
+		[ "$code" = "$expected" ] || { mark=FAIL; failed=1; }
+		summary=$(printf '%s' "$text" | jq -r '
+			if .result.tools then "tools: " + ([.result.tools[].name] | join(", "))
+			elif .result.content then (if .result.isError then "TOOL ERROR " else "" end) + (.result.content[0].text | gsub("\\s+"; " ") | .[0:80])
+			else (. | tostring | .[0:80]) end' 2>/dev/null || printf '%s' "$text" | cut -c1-80)
+		printf '   %s  %-34s -> %s %s\n' "$mark" "$label" "$code" "$summary"
+		if [ "$code" = 401 ] || [ "$code" = 403 ]; then
+			grep -i '^www-authenticate:' "$headers" | tr -d '\r' | sed 's/^/          /' || true
+		fi
+		rm -f "$headers"
+	}
+
+	mcp_call "tools/list, no token" tools/list '{}' 401
+	mcp_call "tools/list" tools/list '{}' 200 -H @<(bearer "$TOKEN")
+	mcp_call "list_notes (needs notes:read)" tools/call '{"name":"list_notes","arguments":{}}' \
+		"$([ "$expect_read" = 200 ] && echo 200 || echo 403)" -H @<(bearer "$TOKEN")
+	mcp_call "add_note (needs notes:write)" tools/call '{"name":"add_note","arguments":{"text":"auth0 e2e mcp note"}}' \
+		"$([ "$expect_write" = 201 ] && echo 200 || echo 403)" -H @<(bearer "$TOKEN")
+	mcp_call "tools/list, payload-tampered token" tools/list '{}' 401 -H @<(bearer "$TAMPERED_PAYLOAD")
+	if [ "$expect_read" = 403 ] || [ "$expect_write" = 403 ]; then
+		echo "   (A 403 above is the step-up signal: the client would now ask the user for the missing scope.)"
+	fi
 fi
 echo
 

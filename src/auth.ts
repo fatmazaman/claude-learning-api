@@ -6,6 +6,10 @@ export interface AuthUser {
 	sub: string;
 	/** Granted scopes, normalized to a list by the verifier. Absent means none. */
 	scope?: string[];
+	/** When the token expires, in seconds since the epoch (from the verifier, when known). */
+	exp?: number;
+	/** The OAuth client the token was issued to (`client_id` or `azp`), when the token has one. */
+	clientId?: string;
 	[claim: string]: unknown;
 }
 
@@ -67,7 +71,23 @@ declare module 'fastify' {
 	}
 }
 
-export function requireAuth(verify: TokenVerifier) {
+/** Extra parameters for the `WWW-Authenticate: Bearer` challenge on a 401 (RFC 6750, RFC 9728). */
+export interface AuthChallenge {
+	/** URL of the OAuth Protected Resource Metadata document (`resource_metadata`). */
+	resourceMetadataUrl?: string;
+	/** Scopes a client should request (`scope`), space-separated. */
+	scope?: string;
+}
+
+function bearerChallenge(params: { error?: string } & AuthChallenge): string {
+	const parts: string[] = [];
+	if (params.error) parts.push(`error="${params.error}"`);
+	if (params.resourceMetadataUrl) parts.push(`resource_metadata="${params.resourceMetadataUrl}"`);
+	if (params.scope) parts.push(`scope="${params.scope}"`);
+	return parts.length > 0 ? `Bearer ${parts.join(', ')}` : 'Bearer';
+}
+
+export function requireAuth(verify: TokenVerifier, options: { challenge?: AuthChallenge } = {}) {
 	return async (request: FastifyRequest, reply: FastifyReply) => {
 		const match = /^Bearer (.+)$/i.exec(request.headers.authorization ?? '');
 		let user: AuthUser | null = null;
@@ -83,7 +103,10 @@ export function requireAuth(verify: TokenVerifier) {
 		}
 		if (!user) {
 			// RFC 6750: say how to authenticate, and whether a token was sent and rejected.
-			const challenge = match ? 'Bearer error="invalid_token"' : 'Bearer';
+			const challenge = bearerChallenge({
+				...(match ? { error: 'invalid_token' } : {}),
+				...options.challenge,
+			});
 			return reply.code(401).header('WWW-Authenticate', challenge).send({ error: 'Unauthorized' });
 		}
 		request.user = user;

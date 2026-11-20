@@ -131,6 +131,10 @@ function toAuthUser(payload: JWTPayload): AuthUser | null {
 	const user: AuthUser = { sub: payload.sub };
 	const scope = parseScope(payload.scope);
 	if (scope) user.scope = scope;
+	if (typeof payload.exp === 'number') user.exp = payload.exp;
+	// RFC 9068 access tokens carry `client_id`; OIDC-style tokens carry `azp`.
+	const clientId = [payload.client_id, payload.azp].find((value) => typeof value === 'string');
+	if (typeof clientId === 'string') user.clientId = clientId;
 	return user;
 }
 

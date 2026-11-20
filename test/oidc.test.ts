@@ -1,15 +1,18 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import {
-	SignJWT,
-	createLocalJWKSet,
-	exportJWK,
-	exportSPKI,
-	generateKeyPair,
-	type JWK,
-	type JWTPayload,
-} from 'jose';
+import { SignJWT, createLocalJWKSet, exportJWK, exportSPKI, generateKeyPair, type JWK } from 'jose';
 import { buildApp } from '../src/app';
+import {
+	AUDIENCE,
+	ISSUER,
+	b64,
+	makeKey,
+	now,
+	signToken,
+	verifierFor,
+	type Key,
+	type TokenOptions,
+} from './helpers/oidc';
 import {
 	buildOidcVerifier,
 	createOidcVerifier,
@@ -17,53 +20,8 @@ import {
 	oidcConfigFromEnv,
 } from '../src/verifiers/oidc';
 
-// Everything here runs offline: tokens are signed with a key pair generated in the test,
-// and the "provider" is a throwaway HTTP server on 127.0.0.1.
-
-const ISSUER = 'https://tenant.example.com/'; // trailing slash, like Auth0
-const AUDIENCE = 'https://api.example.com';
-
-const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
-const now = () => Math.floor(Date.now() / 1000);
-
-async function makeKey(kid: string) {
-	const { publicKey, privateKey } = await generateKeyPair('RS256', { extractable: true });
-	const jwk: JWK = { ...(await exportJWK(publicKey)), kid, alg: 'RS256', use: 'sig' };
-	return { kid, publicKey, privateKey, jwk };
-}
-type Key = Awaited<ReturnType<typeof makeKey>>;
-
-interface TokenOptions {
-	kid?: string;
-	issuer?: string;
-	audience?: string;
-	/** Absolute epoch seconds; null leaves the claim out. */
-	exp?: number | null;
-	nbf?: number;
-	/** null leaves the claim out. */
-	sub?: string | null;
-	extra?: JWTPayload;
-}
-
-async function signToken(key: Key, options: TokenOptions = {}): Promise<string> {
-	const jwt = new SignJWT({ ...options.extra })
-		.setProtectedHeader({ alg: 'RS256', kid: options.kid ?? key.kid })
-		.setIssuer(options.issuer ?? ISSUER)
-		.setAudience(options.audience ?? AUDIENCE)
-		.setIssuedAt(now());
-	if (options.sub !== null) jwt.setSubject(options.sub ?? 'user-1');
-	if (options.exp !== null) jwt.setExpirationTime(options.exp ?? now() + 300);
-	if (options.nbf !== undefined) jwt.setNotBefore(options.nbf);
-	return jwt.sign(key.privateKey);
-}
-
-function verifierFor(keys: Key[], overrides: { issuer?: string; audience?: string } = {}) {
-	return buildOidcVerifier({
-		issuer: overrides.issuer ?? ISSUER,
-		audience: overrides.audience ?? AUDIENCE,
-		getKey: createLocalJWKSet({ keys: keys.map((k) => k.jwk) }),
-	});
-}
+// Everything here runs offline: tokens are signed with a key pair generated in the test
+// (see helpers/oidc.ts), and the "provider" is a throwaway HTTP server on 127.0.0.1.
 
 describe('buildOidcVerifier', () => {
 	let good: Key;
@@ -78,6 +36,7 @@ describe('buildOidcVerifier', () => {
 		await expect(verifierFor([good])(token)).resolves.toEqual({
 			sub: 'user-1',
 			scope: ['read:me', 'write:me'],
+			exp: expect.any(Number),
 		});
 	});
 
@@ -86,9 +45,13 @@ describe('buildOidcVerifier', () => {
 		await expect(verifierFor([good])(withArray)).resolves.toEqual({
 			sub: 'user-1',
 			scope: ['a', 'b'],
+			exp: expect.any(Number),
 		});
 		const without = await signToken(good);
-		await expect(verifierFor([good])(without)).resolves.toEqual({ sub: 'user-1' });
+		await expect(verifierFor([good])(without)).resolves.toEqual({
+			sub: 'user-1',
+			exp: expect.any(Number),
+		});
 	});
 
 	it('rejects an expired token but tolerates 30s of clock skew', async () => {
@@ -355,7 +318,10 @@ describe('createOidcVerifier against a local provider', () => {
 
 	it('verifies a token signed by a key from the discovered JWKS', async () => {
 		const verify = await createOidcVerifier({ issuer: provider.origin, audience: AUDIENCE });
-		await expect(verify(await tokenFor(key1))).resolves.toEqual({ sub: 'user-1' });
+		await expect(verify(await tokenFor(key1))).resolves.toEqual({
+			sub: 'user-1',
+			exp: expect.any(Number),
+		});
 	});
 
 	it('refetches the JWKS when a new kid appears (key rotation)', async () => {
