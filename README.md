@@ -137,6 +137,27 @@ Both tools are scoped to the token's `sub` and share one store with the REST `/n
 
 **Not covered:** MCP resources and prompts, change subscriptions (`subscriptions/listen`), browser CORS for `/mcp` beyond the origin allowlist, and a shared event bus for multi-instance deployments.
 
+## Verified with a real MCP client
+
+The MCP server was tested end to end with [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.13.0 against a real Auth0 tenant (2026-11-20), using `http://localhost:3000/mcp` as the resource. What happened, in order:
+
+1. Connect: `POST /mcp` answered `401` with the `resource_metadata` and `scope="notes:read"` challenge.
+2. The client read the protected resource metadata, found Auth0, registered itself (Dynamic Client Registration) and sent the user to Auth0 with PKCE and `resource=http://localhost:3000/mcp`, asking for `notes:read`.
+3. After login and consent the server accepted the token. This Inspector version speaks protocol 2025-11-25, so its `initialize` handshake was served by the stateless fallback, then `tools/list` and `list_notes` worked.
+4. `add_note` with the read-only token got `403 insufficient_scope` (`scope="notes:write"`). The Inspector showed an "Additional permissions required" step-up that re-authorized with the union of the old and new scopes. After approving it, `add_note` succeeded and `list_notes` showed the note.
+
+**If it does not work, check these** (each one was hit during this test):
+
+| What you see                                                                                                                   | Cause                                                                                                                                                 | Fix                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inspector: "Incompatible auth server: does not support dynamic client registration"                                            | Dynamic Client Registration is off, so Auth0's discovery page (`https://<tenant>/.well-known/openid-configuration`) has no `registration_endpoint`    | Turn on Dynamic Client Registration in Auth0 (Settings, Advanced), then check that field appears                                                                 |
+| The same error after you turned it on, and your server's log shows only `POST /mcp` with a `401` and no `GET /.well-known/...` | The Inspector saved the earlier failure on disk (`~/.mcp-inspector/storage/oauth.json`), so restarting it or using a private window does not clear it | Stop the Inspector, move `~/.mcp-inspector/storage` aside, start it again                                                                                        |
+| Auth0: "Callback URL mismatch"                                                                                                 | The Inspector registers `http://localhost:6274/oauth/callback`, but the page is open on `127.0.0.1`                                                   | In the registered application's **URLs** tab, add `http://127.0.0.1:6274/oauth/callback` to Allowed Callback URLs and save                                       |
+| Auth0: "Client … is not authorized to access resource server"                                                                  | Applications that register themselves are third-party and get no API access by default                                                                | On the API, authorize user access for `notes:read` and `notes:write` (Settings, Default Permissions for Third-Party Applications, or the Application Access tab) |
+| `scripts/auth0-e2e.sh`: "Service not enabled within domain"                                                                    | No API has that identifier, and identifiers cannot be edited                                                                                          | Create an API whose Identifier is exactly `OIDC_AUDIENCE`, add the two permissions, and authorize your machine-to-machine app                                    |
+
+Dynamic Client Registration is open to anyone while it is on (anyone can create applications in your tenant), so turn it off again after testing and delete the test applications it created.
+
 ## Verified against Auth0
 
 `scripts/auth0-e2e.sh` checks the verifier against a real Auth0 tenant. It requests a client-credentials token, starts the compiled server against the tenant, and calls `/me` with the real token and with tampered copies. Put `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID` and `AUTH0_CLIENT_SECRET` in an untracked `.env.auth0` file and run the script yourself. It never prints the secret or the token. Output from a passing run (tenant and client ID replaced with placeholders):
